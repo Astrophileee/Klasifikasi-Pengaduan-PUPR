@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Pengaduan;
-use Illuminate\Support\Facades\Http;
 
 class MasyarakatController extends Controller
 {
@@ -40,31 +39,33 @@ class MasyarakatController extends Controller
         ]);
 
         try {
-            $response = Http::post('http://127.0.0.1:8000/predict',
-            [
-                'teks' => $request->isi_pengaduan
-            ]);
-            if (!$response ->successful()){
-                return back()->with('error', 'Gagal memproses klasifikasi ai saat ini. Silahkan coba lagi nanti');
+            // Path ke Python dan script predict.py
+            $pythonPath = 'python';
+            $scriptPath = base_path('python/predict.py');
+            $teks       = escapeshellarg($request->isi_pengaduan);
+
+            // Jalankan script Python langsung (tidak perlu server uvicorn)
+            $output = shell_exec("$pythonPath $scriptPath $teks 2>&1");
+
+            if (!$output) {
+                return back()->with('error', 'Gagal menjalankan proses klasifikasi. Pastikan Python sudah terinstall.');
             }
 
+            $aiResult = json_decode($output, true);
 
-
-            $aiResult = $response->json();
-            // dd($aiResult['kategori_label']);
-
-
-            if($aiResult['kategori_label'] == 'Bidang Sumber Daya Air(SDA)'){
-                $aiResult['kategori_label'] = 'bidangSDA';
-                }elseif($aiResult['kategori_label'] == 'bidang Jalan'){
-                $aiResult['kategori_label'] = 'bidangJALAN';
-            }elseif($aiResult['kategori_label'] == 'Bidang Tata Ruang'){
-                $aiResult['kategori_label'] = 'bidangTATARUANG';
-            }elseif($aiResult['kategori_label'] == 'bidang Bina Kontruksi dan Teknik(Binkon)'){
-                $aiResult['kategori_label'] = 'bidangBINKON';
-            }elseif($aiResult['kategori_label'] == 'bukan pupr'){
-                $aiResult['kategori_label'] = 'BUKAN PUTR';
+            if (!$aiResult || isset($aiResult['error'])) {
+                return back()->with('error', 'Gagal memproses klasifikasi: ' . ($aiResult['error'] ?? 'Output tidak valid'));
             }
+
+            // Mapping label AI ke kode kategori internal
+            $labelMap = [
+                'Bidang Sumber Daya Air(SDA)'              => 'bidangSDA',
+                'bidang Jalan'                              => 'bidangJALAN',
+                'Bidang Tata Ruang'                        => 'bidangTATARUANG',
+                'bidang Bina Kontruksi dan Teknik(Binkon)' => 'bidangBINKON',
+                'bukan pupr'                               => 'BUKAN PUTR',
+            ];
+            $aiResult['kategori_label'] = $labelMap[$aiResult['kategori_label']] ?? $aiResult['kategori_label'];
 
 
             $kode = 'PGD-' . substr(time(), -6);
@@ -91,9 +92,8 @@ class MasyarakatController extends Controller
             ->with('success', 'Pengaduan berhasil dikirim! Kode: <strong>' . $kode . '</strong>');
 
 
-            } catch (\exception $e) {
-            // dd($e);
-            return back()->with('error', 'Koneksi ke server AI terputus: ' . $e->getMessage());
+            } catch (\Exception $e) {
+            return back()->with('error', 'Terjadi kesalahan saat klasifikasi: ' . $e->getMessage());
         }
 
 
